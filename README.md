@@ -1,5 +1,8 @@
 # Shut Up And Rip Movies 🎬
 
+![Version](https://img.shields.io/badge/version-1.0--beta-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 **Automatic DVD/Blu-ray ripping and transcoding — because ARM made my head hurt.**
 
 `suarip.sh` is a single bash script that handles the full pipeline: detect disc → look up metadata → rip → transcode → copy to NAS → eject. Insert a disc, walk away, find a properly named MKV waiting for you on your media server.
@@ -269,6 +272,24 @@ Hard-won knowledge from real-world testing:
 ## Why Not ARM?
 
 [Automatic Ripping Machine](https://github.com/automatic-ripping-machine/automatic-ripping-machine) is a great project but can be complex to set up and maintain, especially on non-standard hardware or distros. This script is a single bash file with no Docker, no web UI, no database — just insert disc, get MKV.
+
+---
+
+## Changelog
+
+### v1.0-beta
+- Initial release
+- Dual drive routing — internal drives use ddrescue, USB/external use MakeMKV
+- Multi-strategy OMDB metadata lookup (5 progressively simpler search attempts)
+- ddrescue → dvdbackup automatic fallback
+- Lock file prevents multiple simultaneous instances
+- MakeMKV timeout prevents indefinite hangs
+- NAS copy with mount detection and local fallback
+- Sleep inhibition via systemd-inhibit
+- Desktop notifications on each pipeline stage
+- Fully headless/unattended operation with `CONFIRM_METADATA=false`
+- udev auto-trigger support for disc insert automation
+- Tested on Nobara, Ubuntu, and Endeavour OS
 
 ---
 
