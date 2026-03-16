@@ -56,7 +56,7 @@ Fedora based distros will need to add the tainted repo to install libdvdcss
 sudo dnf install rpmfusion-free-release-tainted
 sudo dnf install libdvdcss
 Install MakeMKV from source: https://forum.makemkv.com/forum/viewtopic.php?f=3&t=224
-'''
+```
 
 ### Ubuntu / Debian
 ```bash
