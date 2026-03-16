@@ -52,7 +52,9 @@
 sudo dnf install HandBrake-cli curl python3 libnotify ddrescue dvdbackup
 sudo modprobe sg && echo "sg" | sudo tee /etc/modules-load.d/sg.conf
 sudo usermod -aG cdrom $USER
-```
+```Fedora based distros will need to add the tainted repo to install libdvdcss 
+sudo dnf install rpmfusion-free-release-tainted
+sudo dnf install libdvdcss
 Install MakeMKV from source: https://forum.makemkv.com/forum/viewtopic.php?f=3&t=224
 
 ### Ubuntu / Debian
