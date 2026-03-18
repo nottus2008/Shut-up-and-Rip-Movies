@@ -260,6 +260,11 @@ Hard-won knowledge from real-world testing:
 - Check credentials file permissions: `chmod 600 ~/.nascredentials`
 - The script saves locally and warns if NAS is unavailable
 
+**MakeMkv failure Exit code 1:**
+- flatpak MakeMKV needs filesystem access to scratch
+- Fix: flatpak override --user --filesystem=/mnt/scratch com.makemkv.MakeMKV
+       flatpak override --user --filesystem=/mnt/nas com.makemkv.MakeMKV
+
 ---
 
 ## Roadmap
