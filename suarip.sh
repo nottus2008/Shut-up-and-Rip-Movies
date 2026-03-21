@@ -41,7 +41,7 @@
 # =============================================================================
 # VERSION
 # =============================================================================
-VERSION="1.0-beta"
+VERSION="1.2-beta"
 # =============================================================================
 # CONFIG - Edit these values
 # =============================================================================
@@ -61,8 +61,15 @@ AUTO_EJECT=true                         # Eject disc when done (true/false)
 CONFIRM_METADATA=false                  # Prompt to confirm metadata (true/false)
                                         # false = fully headless/unattended
 MIN_TITLE_SECONDS=3600                  # Min title length for MakeMKV (seconds)
-MAKEMKV_TIMEOUT=1800                    # MakeMKV timeout in seconds (30 min)
+MAKEMKV_TIMEOUT=3600                    # MakeMKV timeout in seconds (60 min)
 DDRESCUE_RETRIES=3                      # ddrescue bad sector retry count
+USE_VAAPI=true                          # Use VAAPI GPU encoding if available (true/false)
+VAAPI_ENCODER="vaapi_h264"              # HandBrake encoder flag (vaapi_h264 or vaapi_hevc)
+VAAPI_DETECT="h264_vaapi"              # ffmpeg codec name used in HandBrake -e list output
+                                        # (h264_vaapi for H.264, hevc_vaapi for HEVC)
+VAAPI_QUALITY="22"                      # VAAPI quality (higher=better, unlike RF)
+NTFY_TOPIC=""                           # ntfy.sh topic for push notifications (leave empty to skip)
+NTFY_SERVER="ntfy.sh"                   # ntfy server (change for self-hosted instance)
 # =============================================================================
 # END CONFIG
 # =============================================================================
@@ -112,10 +119,25 @@ notify() {
     fi
 }
 
+# ntfy.sh push notification function
+ntfy() {
+    local message="$1"
+    local priority="${2:-default}"
+    if [ -n "$NTFY_TOPIC" ]; then
+        curl -s \
+            -H "Priority: $priority" \
+            -H "Tags: movie,dvd" \
+            -d "$message" \
+            "https://${NTFY_SERVER}/${NTFY_TOPIC}" \
+            >> "$LOG_FILE" 2>&1 || true
+    fi
+}
+
 error_exit() {
     log "${RED}[ERROR]${NC} $1"
     log "${YELLOW}[INFO]${NC} Temp files preserved in $TEMP_DIR for manual recovery"
     notify "SuaRip Failed" "$1"
+    ntfy "❌ SuaRip Failed: $1" "high"
     rm -f "$LOCK_FILE"
     exit 1
 }
@@ -403,27 +425,38 @@ lookup_metadata() {
 }
 
 # =============================================================================
-# STEP 3A: Rip with ddrescue (internal drive)
+# STEP 3A: Rip with ddrescue + dvdbackup (internal drive - Option B pipeline)
+# =============================================================================
+# Pipeline:
+#   1. ddrescue reads disc into ISO (handles bad sectors, damaged discs)
+#   2. Mount ISO
+#   3. dvdbackup extracts proper VIDEO_TS structure from mounted ISO
+#   4. Unmount ISO
+#   5. HandBrake encodes from VIDEO_TS (avoids single-VOB and IFO issues)
 # =============================================================================
 rip_ddrescue() {
-    log "\n${YELLOW}[INFO]${NC} Ripping with ddrescue..."
+    log "\n${YELLOW}[INFO]${NC} Ripping with ddrescue + dvdbackup..."
     notify "SuaRip" "Ripping $OUTPUT_NAME (ddrescue)..."
+    ntfy "🎬 Ripping: $OUTPUT_NAME (ddrescue)" "low"
 
     mkdir -p "$TEMP_DIR" || error_exit "Could not create temp dir: $TEMP_DIR"
-    check_space "$TEMP_DIR" 10
+    check_space "$TEMP_DIR" 20  # Need space for both ISO and VIDEO_TS
 
     local ISO_FILE="$TEMP_DIR/disc.iso"
     local DDRESCUE_LOG="$TEMP_DIR/ddrescue.log"
+    local ISO_MOUNT="$TEMP_DIR/iso_mount"
+    local DVD_DIR="$TEMP_DIR/dvd"
 
-    log "${YELLOW}[INFO]${NC} Output ISO: $ISO_FILE"
+    # --- Stage 1: ddrescue ---
+    log "${YELLOW}[INFO]${NC} Stage 1: ddrescue reading disc to ISO..."
     log "${YELLOW}[INFO]${NC} Retries per bad sector: $DDRESCUE_RETRIES"
 
     ddrescue -d -r"$DDRESCUE_RETRIES" "$ACTIVE_DRIVE" "$ISO_FILE" "$DDRESCUE_LOG" \
         >> "$LOG_FILE" 2>&1
 
     if [ ! -f "$ISO_FILE" ] || [ ! -s "$ISO_FILE" ]; then
-        log "${YELLOW}[WARN]${NC} ddrescue failed or produced empty ISO - trying dvdbackup fallback..."
-        rip_dvdbackup
+        log "${YELLOW}[WARN]${NC} ddrescue failed - falling back to direct dvdbackup from disc..."
+        rip_dvdbackup_direct
         return
     fi
 
@@ -431,7 +464,6 @@ rip_ddrescue() {
     ISO_SIZE=$(du -sh "$ISO_FILE" | cut -f1)
     log "${GREEN}[INFO]${NC} ISO created: $ISO_SIZE"
 
-    # Check for errors in ddrescue log
     local ERRORS
     ERRORS=$(grep -c "error" "$DDRESCUE_LOG" 2>/dev/null || echo "0")
     if [ "$ERRORS" -gt 0 ]; then
@@ -440,37 +472,76 @@ rip_ddrescue() {
         log "${GREEN}[INFO]${NC} ddrescue completed with no errors"
     fi
 
-    RIP_FILE="$ISO_FILE"
+    # --- Stage 2: Mount ISO ---
+    log "${YELLOW}[INFO]${NC} Stage 2: mounting ISO..."
+    mkdir -p "$ISO_MOUNT"
+    if ! sudo mount -o loop "$ISO_FILE" "$ISO_MOUNT" 2>/dev/null; then
+        log "${YELLOW}[WARN]${NC} Could not mount ISO - falling back to direct dvdbackup from disc..."
+        rip_dvdbackup_direct
+        return
+    fi
+    log "${GREEN}[INFO]${NC} ISO mounted at $ISO_MOUNT"
+
+    # --- Stage 3: dvdbackup from mounted ISO ---
+    log "${YELLOW}[INFO]${NC} Stage 3: dvdbackup extracting VIDEO_TS from ISO..."
+    mkdir -p "$DVD_DIR"
+
+    if ! command -v dvdbackup &>/dev/null; then
+        umount "$ISO_MOUNT" 2>/dev/null
+        error_exit "dvdbackup not found - install dvdbackup"
+    fi
+
+    dvdbackup -F -i "$ISO_MOUNT" -o "$DVD_DIR" >> "$LOG_FILE" 2>&1
+
+    # --- Stage 4: Unmount ISO ---
+    sudo umount "$ISO_MOUNT" 2>/dev/null
+    log "${GREEN}[INFO]${NC} ISO unmounted"
+
+    # --- Find VIDEO_TS ---
+    local VIDEO_TS
+    VIDEO_TS=$(find "$DVD_DIR" -type d -name "VIDEO_TS" 2>/dev/null | head -1)
+
+    if [ -z "$VIDEO_TS" ]; then
+        log "${YELLOW}[WARN]${NC} dvdbackup from ISO failed - falling back to direct dvdbackup from disc..."
+        rip_dvdbackup_direct
+        return
+    fi
+
+    local DVD_SIZE
+    DVD_SIZE=$(du -sh "$DVD_DIR" | cut -f1)
+    log "${GREEN}[INFO]${NC} VIDEO_TS extracted: $DVD_SIZE"
+
+    RIP_FILE="$VIDEO_TS"
 }
 
 # =============================================================================
-# STEP 3B: dvdbackup fallback (internal drive)
+# STEP 3B: Direct dvdbackup fallback (reads from disc, bypasses ISO)
 # =============================================================================
-rip_dvdbackup() {
+rip_dvdbackup_direct() {
     if ! command -v dvdbackup &>/dev/null; then
-        error_exit "dvdbackup not found and ddrescue failed - cannot rip disc"
+        error_exit "dvdbackup not found - cannot rip disc"
     fi
 
-    log "${YELLOW}[INFO]${NC} Trying dvdbackup fallback..."
+    log "${YELLOW}[INFO]${NC} Falling back to direct dvdbackup from disc..."
 
-    local DVD_DIR="$TEMP_DIR/dvd"
+    local DVD_DIR="$TEMP_DIR/dvd_direct"
     mkdir -p "$DVD_DIR"
 
-    dvdbackup -M -i "$ACTIVE_DRIVE" -o "$DVD_DIR" >> "$LOG_FILE" 2>&1
+    dvdbackup -F -i "$ACTIVE_DRIVE" -o "$DVD_DIR" >> "$LOG_FILE" 2>&1
 
     # Find the VIDEO_TS folder
     local VIDEO_TS
     VIDEO_TS=$(find "$DVD_DIR" -type d -name "VIDEO_TS" 2>/dev/null | head -1)
 
     if [ -z "$VIDEO_TS" ]; then
-        error_exit "dvdbackup also failed - check disc for damage"
+        error_exit "All rip methods failed - check disc for damage"
     fi
 
     local DVD_SIZE
     DVD_SIZE=$(du -sh "$DVD_DIR" | cut -f1)
     log "${GREEN}[INFO]${NC} dvdbackup complete: $DVD_SIZE"
 
-    RIP_FILE="$DVD_DIR"
+    RIP_FILE="$VIDEO_TS"
 }
 
 # =============================================================================
@@ -479,6 +550,7 @@ rip_dvdbackup() {
 rip_makemkv() {
     log "\n${YELLOW}[INFO]${NC} Ripping with MakeMKV..."
     notify "SuaRip" "Ripping $OUTPUT_NAME (MakeMKV)..."
+    ntfy "🎬 Ripping: $OUTPUT_NAME" "low"
 
     mkdir -p "$TEMP_DIR" || error_exit "Could not create temp dir: $TEMP_DIR"
     local MIN_SPACE=10
@@ -535,6 +607,7 @@ rip_makemkv() {
 transcode() {
     log "\n${YELLOW}[INFO]${NC} Starting transcode..."
     notify "SuaRip" "Transcoding $OUTPUT_NAME..."
+    ntfy "⚙️ Transcoding: $OUTPUT_NAME" "low"
 
     mkdir -p "$OUTPUT_DIR/$OUTPUT_NAME" || error_exit "Could not create output directory"
     OUTPUT_FILE="$OUTPUT_DIR/$OUTPUT_NAME/$OUTPUT_NAME.mkv"
@@ -554,29 +627,93 @@ transcode() {
     fi
 
     log "${YELLOW}[INFO]${NC} Output: $OUTPUT_FILE"
-    log "${YELLOW}[INFO]${NC} Preset: $PRESET | Quality: RF$RF_QUALITY"
     log "${YELLOW}[INFO]${NC} Source: $RIP_FILE"
     log "${YELLOW}[INFO]${NC} This will take a while..."
+
+    # Detect VAAPI availability
+    # Note: HandBrake encoder flag (VAAPI_ENCODER) differs from the ffmpeg codec
+    #       name shown in HandBrake -e list output (VAAPI_DETECT). We grep for
+    #       VAAPI_DETECT to confirm availability, then pass VAAPI_ENCODER to
+    #       HandBrake --encoder.
+    local USE_HW=false
+    if [ "$USE_VAAPI" = true ]; then
+        if HandBrakeCLI -e list 2>&1 | grep -q "${VAAPI_DETECT}"; then
+            USE_HW=true
+            log "${GREEN}[INFO]${NC} VAAPI available - using ${VAAPI_ENCODER} hardware encoding"
+        else
+            log "${YELLOW}[WARN]${NC} VAAPI not available - falling back to software encoding"
+        fi
+    fi
+
+    if [ "$USE_HW" = true ]; then
+        log "${YELLOW}[INFO]${NC} Encoder: $VAAPI_ENCODER | Quality: $VAAPI_QUALITY"
+    else
+        log "${YELLOW}[INFO]${NC} Preset: $PRESET | Quality: RF$RF_QUALITY"
+    fi
+
+    # Find the longest title to avoid HandBrake picking wrong title on complex discs
+    local TITLE_NUM=1
+    local LONGEST
+    LONGEST=$(HandBrakeCLI -i "$RIP_FILE" --scan -t 0 2>&1 \
+        | grep "duration is" \
+        | grep -v "too short" \
+        | awk '{print $NF, NR}' \
+        | sort -rn | head -1 | awk '{print $2}')
+    if [ -n "$LONGEST" ]; then
+        TITLE_NUM="$LONGEST"
+        log "${GREEN}[INFO]${NC} Longest title found: #$TITLE_NUM"
+    else
+        log "${YELLOW}[WARN]${NC} Could not determine longest title, using title 1"
+    fi
 
     local START_TIME
     START_TIME=$(date +%s)
 
-    if ! HandBrakeCLI \
-        -i "$RIP_FILE" \
-        -o "$OUTPUT_FILE" \
-        --preset "$PRESET" \
-        -q "$RF_QUALITY" \
-        --subtitle scan -F \
-        >> "$LOG_FILE" 2>&1; then
-        error_exit "HandBrake failed - check log: $LOG_FILE"
+    if [ "$USE_HW" = true ]; then
+        if ! HandBrakeCLI \
+            -i "$RIP_FILE" \
+            -t "$TITLE_NUM" \
+            -o "$OUTPUT_FILE" \
+            --encoder "$VAAPI_ENCODER" \
+            --quality "$VAAPI_QUALITY" \
+            --subtitle scan -F \
+            >> "$LOG_FILE" 2>&1; then
+            log "${YELLOW}[WARN]${NC} VAAPI encode failed - falling back to software..."
+            if ! HandBrakeCLI \
+                -i "$RIP_FILE" \
+                -t "$TITLE_NUM" \
+                -o "$OUTPUT_FILE" \
+                --preset "$PRESET" \
+                -q "$RF_QUALITY" \
+                --subtitle scan -F \
+                >> "$LOG_FILE" 2>&1; then
+                error_exit "HandBrake failed - check log: $LOG_FILE"
+            fi
+        fi
+    else
+        if ! HandBrakeCLI \
+            -i "$RIP_FILE" \
+            -t "$TITLE_NUM" \
+            -o "$OUTPUT_FILE" \
+            --preset "$PRESET" \
+            -q "$RF_QUALITY" \
+            --subtitle scan -F \
+            >> "$LOG_FILE" 2>&1; then
+            error_exit "HandBrake failed - check log: $LOG_FILE"
+        fi
     fi
 
     local END_TIME ELAPSED ELAPSED_MIN OUTPUT_SIZE
     END_TIME=$(date +%s)
     ELAPSED=$(( END_TIME - START_TIME ))
     ELAPSED_MIN=$(( ELAPSED / 60 ))
-    OUTPUT_SIZE=$(du -sh "$OUTPUT_FILE" | cut -f1)
 
+    # Verify output file actually exists and has content
+    if [ ! -f "$OUTPUT_FILE" ] || [ ! -s "$OUTPUT_FILE" ]; then
+        error_exit "HandBrake produced no output file - check log: $LOG_FILE"
+    fi
+
+    OUTPUT_SIZE=$(du -sh "$OUTPUT_FILE" | cut -f1)
     log "${GREEN}[INFO]${NC} Transcode complete in ${ELAPSED_MIN} minutes"
     log "${GREEN}[INFO]${NC} Output size: $OUTPUT_SIZE"
 }
@@ -600,6 +737,7 @@ copy_to_nas() {
 
     log "\n${YELLOW}[INFO]${NC} Copying to NAS: $NAS_DIR/$OUTPUT_NAME/"
     notify "SuaRip" "Copying $OUTPUT_NAME to NAS..."
+    ntfy "📦 Copying to NAS: $OUTPUT_NAME" "low"
 
     mkdir -p "$NAS_DIR/$OUTPUT_NAME"
     if ! cp "$OUTPUT_FILE" "$NAS_DIR/$OUTPUT_NAME/"; then
@@ -615,8 +753,36 @@ copy_to_nas() {
 # =============================================================================
 # CORE - Run all steps
 # =============================================================================
+
+# Kill any rogue MakeMKV or HandBrake processes on exit
+kill_children() {
+    log "${YELLOW}[INFO]${NC} Cleaning up child processes..."
+    pkill -P $$ 2>/dev/null || true
+    killall makemkvcon 2>/dev/null || true
+    killall HandBrakeCLI 2>/dev/null || true
+    sudo umount /mnt/scratch/suarip_temp/iso_mount 2>/dev/null || true
+    rm -f "$LOCK_FILE"
+}
+
 run() {
-    trap 'log "${RED}[ERROR]${NC} Script interrupted"; rm -f "$LOCK_FILE"; exit 1' INT TERM
+    trap 'log "${RED}[ERROR]${NC} Script interrupted"; kill_children; exit 1' INT TERM
+
+    # Guard against udev firing on eject - verify a disc is actually present
+    # before acquiring the lock or doing anything else. Silent exit so there
+    # are no spurious "no disc" notifications when a rip finishes and ejects.
+    sleep 3
+    local disc_present=false
+    for drive in "$INTERNAL_DRIVE" "$USB_DRIVE"; do
+        [ -z "$drive" ] && continue
+        [ ! -b "$drive" ] && continue
+        if blkid "$drive" &>/dev/null 2>&1; then
+            disc_present=true
+            break
+        fi
+    done
+    if [ "$disc_present" = false ]; then
+        exit 0
+    fi
 
     check_lock
 
@@ -646,6 +812,7 @@ run() {
     log "${GREEN}========================================${NC}"
 
     notify "SuaRip Complete" "$OUTPUT_NAME is ready!"
+    ntfy "✅ $OUTPUT_NAME is ready!" "default"
 }
 
 # =============================================================================
