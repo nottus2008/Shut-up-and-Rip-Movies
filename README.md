@@ -296,7 +296,7 @@ Hard-won knowledge from real-world testing:
 
 | Machine | CPU | GPU | OS | Notes |
 |---------|-----|-----|----|-------|
-| Custom build | AMD Ryzen 5 5600G | Radeon RX 6600 | Nobara Linux | VAAPI working, 300-400+ fps transcode |
+| Custom build | AMD Ryzen 5 5600G | Radeon RX 560 | Nobara Linux | VAAPI working, 150-200+ fps transcode |
 | Mac Mini 5,1 | Intel Core i5-2520M | Intel HD 3000 | Ubuntu | Works, ~25fps software transcode |
 | Custom AM1 build | AMD Athlon 5350 | AMD GCN | Endeavour OS | Works with ddrescue, ~25fps transcode |
 
