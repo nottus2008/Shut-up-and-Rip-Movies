@@ -1,6 +1,6 @@
 # Shut Up And Rip Movies 🎬
 
-![Version](https://img.shields.io/badge/version-1.2--beta-blue)
+![Version](https://img.shields.io/badge/version-1.3--beta-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Automatic DVD/Blu-ray ripping and transcoding — because ARM made my head hurt.**
@@ -367,6 +367,9 @@ Hard-won knowledge from real-world testing:
 ---
 
 ## Changelog
+
+### v1.3-beta
+- Fixed VAAPI transcode missing `--preset` flag — previously VAAPI encodes had no resolution or H.264 level set, producing 360p files with level 0 metadata that Jellyfin/Plex could not transcode via HLS. Adding `--preset` alongside `--encoder vaapi_h264` fixes resolution, audio, and H.264 profile/level correctly. **If you ripped movies with v1.2-beta or earlier using VAAPI, re-rip them.**
 
 ### v1.2-beta
 - Fixed VAAPI detection — `VAAPI_ENCODER` (HandBrake flag) and `VAAPI_DETECT` (ffmpeg codec name) are now separate config values to correctly handle the naming difference between HandBrake and ffmpeg
