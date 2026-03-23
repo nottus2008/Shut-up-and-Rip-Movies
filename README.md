@@ -1,6 +1,6 @@
 # Shut Up And Rip Movies 🎬
 
-![Version](https://img.shields.io/badge/version-1.3--beta-blue)
+![Version](https://img.shields.io/badge/version-1.4--beta-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Automatic DVD/Blu-ray ripping and transcoding — because ARM made my head hurt.**
@@ -296,7 +296,7 @@ Hard-won knowledge from real-world testing:
 
 | Machine | CPU | GPU | OS | Notes |
 |---------|-----|-----|----|-------|
-| Custom build | AMD Ryzen 5 5600G | Radeon RX 560 | Nobara Linux | VAAPI working, 150-200+ fps transcode |
+| Custom build | AMD Ryzen 5 5600G | Radeon RX 6600 | Nobara Linux | VAAPI working, 300-400+ fps transcode |
 | Mac Mini 5,1 | Intel Core i5-2520M | Intel HD 3000 | Ubuntu | Works, ~25fps software transcode |
 | Custom AM1 build | AMD Athlon 5350 | AMD GCN | Endeavour OS | Works with ddrescue, ~25fps transcode |
 
@@ -367,6 +367,10 @@ Hard-won knowledge from real-world testing:
 ---
 
 ## Changelog
+
+### v1.4-beta
+- Fixed silent failure when `systemd-inhibit` is installed but broken (e.g. after a Nobara update) — script now tests `systemd-inhibit` before using it and falls through to normal execution if broken rather than silently exiting
+- Added `side[ab12]` stripping to disc label cleaner — labels like `Idiocracy Sidea` now clean to `Idiocracy` for correct OMDB lookup
 
 ### v1.3-beta
 - Fixed VAAPI transcode missing `--preset` flag — previously VAAPI encodes had no resolution or H.264 level set, producing 360p files with level 0 metadata that Jellyfin/Plex could not transcode via HLS. Adding `--preset` alongside `--encoder vaapi_h264` fixes resolution, audio, and H.264 profile/level correctly. **If you ripped movies with v1.2-beta or earlier using VAAPI, re-rip them.**
