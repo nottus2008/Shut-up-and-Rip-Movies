@@ -41,7 +41,7 @@
 # =============================================================================
 # VERSION
 # =============================================================================
-VERSION="1.3-beta"
+VERSION="1.4-beta"
 # =============================================================================
 # CONFIG - Edit these values
 # =============================================================================
@@ -303,6 +303,7 @@ clean_label_base() {
         | sed 's/\bregion[0-9]*\b//gi' \
         | sed 's/\bbd\b//gi' \
         | sed 's/\bfrench\b//gi' \
+        | sed 's/\bside[ab12]\b//gi' \
         | sed 's/\bmarvels\b/marvel/gi' \
         | sed 's/[0-9]*$//' \
         | sed 's/ \+/ /g' \
@@ -822,7 +823,7 @@ run() {
 if [ "$1" = "--no-inhibit" ]; then
     shift
     run "$@"
-elif command -v systemd-inhibit &>/dev/null; then
+elif command -v systemd-inhibit &>/dev/null && systemd-inhibit --list &>/dev/null 2>&1; then
     exec systemd-inhibit \
         --what=sleep:idle \
         --who="SuaRip" \
