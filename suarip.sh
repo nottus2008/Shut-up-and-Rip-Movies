@@ -51,7 +51,7 @@ USB_DRIVE="/dev/sr1"                    # USB/external optical drive
 TEMP_DIR="/mnt/scratch/suarip_temp"     # Scratch space for temp rip files
 OUTPUT_DIR="$HOME/Videos/Movies"        # Final output directory (pre-NAS)
 NAS_DIR="/mnt/nas/Media/Movies"         # NAS path (leave empty to skip)
-OMDB_API_KEY="8f823ae7"                 # OMDB API key
+OMDB_API_KEY="your_key_here"                # OMDB API key
 DVD_PRESET="HQ 720p30 Surround"        # HandBrake preset for DVD
 BLURAY_PRESET="HQ 1080p30 Surround"    # HandBrake preset for Blu-ray
 RF_QUALITY="19"                         # RF quality (lower=better, 18-22 is good)
