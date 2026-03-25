@@ -26,9 +26,8 @@
 #   Install MakeMKV via AUR or source build
 #
 # Drive notes:
-#   - Internal drives: ddrescue/dvdbackup used (some internal drives are
-#     incompatible with MakeMKV's SCSI interface e.g. HL-DT-ST GH50N)
-#   - USB/external drives: MakeMKV used (better SCSI compatibility)
+#   - All drives now use MakeMKV by default
+#   - ddrescue pipeline available via rescue mode prompt at startup
 #   - Blu-ray: always requires MakeMKV regardless of drive
 #
 # Setup:
@@ -41,7 +40,7 @@
 # =============================================================================
 # VERSION
 # =============================================================================
-VERSION="1.4-beta"
+VERSION="1.6-beta"
 # =============================================================================
 # CONFIG - Edit these values
 # =============================================================================
@@ -49,9 +48,11 @@ INTERNAL_DRIVE="/dev/sr0"               # Internal optical drive
 USB_DRIVE="/dev/sr1"                    # USB/external optical drive
                                         # Leave empty if no USB drive
 TEMP_DIR="/mnt/scratch/suarip_temp"     # Scratch space for temp rip files
+                                        # Recommend SSD on same controller as
+                                        # optical drive to avoid I/O crosstalk
 OUTPUT_DIR="$HOME/Videos/Movies"        # Final output directory (pre-NAS)
 NAS_DIR="/mnt/nas/Media/Movies"         # NAS path (leave empty to skip)
-OMDB_API_KEY="your_key_here"                # OMDB API key
+OMDB_API_KEY=""                         # ⚠️ FILL THIS IN - free key from omdbapi.com
 DVD_PRESET="HQ 720p30 Surround"        # HandBrake preset for DVD
 BLURAY_PRESET="HQ 1080p30 Surround"    # HandBrake preset for Blu-ray
 RF_QUALITY="19"                         # RF quality (lower=better, 18-22 is good)
@@ -68,8 +69,9 @@ VAAPI_ENCODER="vaapi_h264"              # HandBrake encoder flag (vaapi_h264 or 
 VAAPI_DETECT="h264_vaapi"              # ffmpeg codec name used in HandBrake -e list output
                                         # (h264_vaapi for H.264, hevc_vaapi for HEVC)
 VAAPI_QUALITY="22"                      # VAAPI quality (higher=better, unlike RF)
-NTFY_TOPIC=""                           # ntfy.sh topic for push notifications (leave empty to skip)
+NTFY_TOPIC=""                           # ⚠️ FILL THIS IN - ntfy.sh topic for push notifications
 NTFY_SERVER="ntfy.sh"                   # ntfy server (change for self-hosted instance)
+RESCUE_PROMPT_TIMEOUT=10               # Seconds to wait for rescue mode prompt (0 to disable)
 # =============================================================================
 # END CONFIG
 # =============================================================================
@@ -95,6 +97,7 @@ IS_BLURAY=false
 PRESET="$DVD_PRESET"
 ACTIVE_DRIVE=""
 USE_MAKEMKV=false
+RESCUE_MODE=false
 RIP_FILE=""
 OUTPUT_NAME=""
 OUTPUT_FILE=""
@@ -135,7 +138,12 @@ ntfy() {
 
 error_exit() {
     log "${RED}[ERROR]${NC} $1"
-    log "${YELLOW}[INFO]${NC} Temp files preserved in $TEMP_DIR for manual recovery"
+    if [ "$RESCUE_MODE" = true ]; then
+        log "${YELLOW}[INFO]${NC} Rescue mode: temp files preserved in $TEMP_DIR for manual recovery"
+    else
+        log "${YELLOW}[INFO]${NC} Cleaning up temp files after failure..."
+        cleanup
+    fi
     notify "SuaRip Failed" "$1"
     ntfy "❌ SuaRip Failed: $1" "high"
     rm -f "$LOCK_FILE"
@@ -147,8 +155,15 @@ cleanup() {
         log "${YELLOW}[INFO]${NC} Cleaning up temp files..."
         rm -rf "$TEMP_DIR"
     fi
-    # Clean up ISO log file if ddrescue was used
     rm -f "$TEMP_DIR"/../suarip_ddrescue_*.log 2>/dev/null || true
+}
+
+cleanup_stale() {
+    # Remove leftover temp files from previous runs at startup
+    if [ -d "$TEMP_DIR" ]; then
+        log "${YELLOW}[INFO]${NC} Removing leftover temp files from previous run..."
+        rm -rf "$TEMP_DIR"
+    fi
 }
 
 eject_disc() {
@@ -201,6 +216,44 @@ detect_makemkv() {
     else
         MAKEMKV=""
     fi
+}
+
+# =============================================================================
+# RESCUE MODE PROMPT
+# =============================================================================
+# Prompts at startup to use ddrescue recovery pipeline for damaged discs.
+# Times out after RESCUE_PROMPT_TIMEOUT seconds and defaults to normal mode.
+# Only shown when running interactively (not via udev/headless).
+# =============================================================================
+prompt_rescue_mode() {
+    [ "$RESCUE_PROMPT_TIMEOUT" -eq 0 ] && return
+    # Skip prompt if not running in a terminal (udev/headless)
+    [ ! -t 0 ] && return
+
+    echo ""
+    echo -e "${YELLOW}╔══════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║         SuaRip v${VERSION} Starting           ║${NC}"
+    echo -e "${YELLOW}╠══════════════════════════════════════════╣${NC}"
+    echo -e "${YELLOW}║  Use ddrescue RESCUE pipeline?           ║${NC}"
+    echo -e "${YELLOW}║  (for damaged/unreadable discs)          ║${NC}"
+    echo -e "${YELLOW}║  Press 'r' for rescue, any other key or  ║${NC}"
+    echo -e "${YELLOW}║  wait ${RESCUE_PROMPT_TIMEOUT}s to use normal MakeMKV mode  ║${NC}"
+    echo -e "${YELLOW}╚══════════════════════════════════════════╝${NC}"
+    echo ""
+
+    local key
+    if read -t "$RESCUE_PROMPT_TIMEOUT" -n 1 -s key; then
+        if [ "$key" = "r" ] || [ "$key" = "R" ]; then
+            RESCUE_MODE=true
+            echo -e "${RED}[RESCUE]${NC} Rescue mode enabled - using ddrescue pipeline"
+            log "${RED}[RESCUE]${NC} Rescue mode enabled by user"
+        else
+            echo -e "${GREEN}[INFO]${NC} Normal mode - using MakeMKV pipeline"
+        fi
+    else
+        echo -e "${GREEN}[INFO]${NC} Timeout - using normal MakeMKV pipeline"
+    fi
+    echo ""
 }
 
 # =============================================================================
@@ -257,26 +310,30 @@ detect_disc() {
     rmdir "$mnt" 2>/dev/null
 
     # Decide rip tool:
-    # - Blu-ray always needs MakeMKV
-    # - USB drive uses MakeMKV (better SCSI compatibility)
-    # - Internal drive uses ddrescue/dvdbackup (avoids SCSI issues)
-    if [ "$IS_BLURAY" = true ]; then
+    # - Rescue mode: always use ddrescue regardless of drive
+    # - Blu-ray: always needs MakeMKV
+    # - All other drives: use MakeMKV by default
+    # - ddrescue pipeline available via rescue mode prompt at startup
+    if [ "$RESCUE_MODE" = true ]; then
+        if [ "$IS_BLURAY" = true ]; then
+            error_exit "Rescue mode not supported for Blu-ray - use normal MakeMKV mode"
+        fi
+        USE_MAKEMKV=false
+        log "${RED}[RESCUE]${NC} Rescue mode: using ddrescue pipeline on $ACTIVE_DRIVE"
+    elif [ "$IS_BLURAY" = true ]; then
         if [ -z "$MAKEMKV" ]; then
             error_exit "Blu-ray detected but MakeMKV not found - install MakeMKV"
         fi
         USE_MAKEMKV=true
         log "${GREEN}[INFO]${NC} Blu-ray: using MakeMKV | Preset: $PRESET"
-    elif [ "$ACTIVE_DRIVE" = "$USB_DRIVE" ]; then
+    else
         if [ -z "$MAKEMKV" ]; then
-            log "${YELLOW}[WARN]${NC} USB drive detected but MakeMKV not found - falling back to ddrescue"
+            log "${YELLOW}[WARN]${NC} MakeMKV not found - falling back to ddrescue"
             USE_MAKEMKV=false
         else
             USE_MAKEMKV=true
-            log "${GREEN}[INFO]${NC} USB drive: using MakeMKV | Preset: $PRESET"
+            log "${GREEN}[INFO]${NC} Using MakeMKV | Drive: $ACTIVE_DRIVE | Preset: $PRESET"
         fi
-    else
-        USE_MAKEMKV=false
-        log "${GREEN}[INFO]${NC} Internal drive: using ddrescue | Preset: $PRESET"
     fi
 }
 
@@ -426,19 +483,23 @@ lookup_metadata() {
 }
 
 # =============================================================================
-# STEP 3A: Rip with ddrescue + dvdbackup (internal drive - Option B pipeline)
+# STEP 3A: Rip with ddrescue + dvdbackup (RESCUE MODE ONLY)
 # =============================================================================
 # Pipeline:
 #   1. ddrescue reads disc into ISO (handles bad sectors, damaged discs)
 #   2. Mount ISO
 #   3. dvdbackup extracts proper VIDEO_TS structure from mounted ISO
 #   4. Unmount ISO
-#   5. HandBrake encodes from VIDEO_TS (avoids single-VOB and IFO issues)
+#   5. HandBrake encodes from VIDEO_TS
+#
+# Note: Only used when rescue mode is selected at startup prompt.
+#       Requires scratch space on same SATA controller as optical drive
+#       to avoid controller crosstalk corrupting the ISO.
 # =============================================================================
 rip_ddrescue() {
-    log "\n${YELLOW}[INFO]${NC} Ripping with ddrescue + dvdbackup..."
-    notify "SuaRip" "Ripping $OUTPUT_NAME (ddrescue)..."
-    ntfy "🎬 Ripping: $OUTPUT_NAME (ddrescue)" "low"
+    log "\n${RED}[RESCUE]${NC} Ripping with ddrescue + dvdbackup..."
+    notify "SuaRip" "Ripping $OUTPUT_NAME (rescue/ddrescue)..."
+    ntfy "🔧 Rescue rip: $OUTPUT_NAME (ddrescue)" "default"
 
     mkdir -p "$TEMP_DIR" || error_exit "Could not create temp dir: $TEMP_DIR"
     check_space "$TEMP_DIR" 20  # Need space for both ISO and VIDEO_TS
@@ -546,7 +607,7 @@ rip_dvdbackup_direct() {
 }
 
 # =============================================================================
-# STEP 3C: Rip with MakeMKV (USB/Blu-ray drive)
+# STEP 3C: Rip with MakeMKV (default pipeline for all drives)
 # =============================================================================
 rip_makemkv() {
     log "\n${YELLOW}[INFO]${NC} Ripping with MakeMKV..."
@@ -762,7 +823,7 @@ kill_children() {
     pkill -P $$ 2>/dev/null || true
     killall makemkvcon 2>/dev/null || true
     killall HandBrakeCLI 2>/dev/null || true
-    sudo umount /mnt/scratch/suarip_temp/iso_mount 2>/dev/null || true
+    sudo umount "$TEMP_DIR/iso_mount" 2>/dev/null || true
     rm -f "$LOCK_FILE"
 }
 
@@ -785,6 +846,12 @@ run() {
     if [ "$disc_present" = false ]; then
         exit 0
     fi
+
+    # Prompt for rescue mode (interactive only, times out to normal mode)
+    prompt_rescue_mode
+
+    # Clean up any leftover temp files from previous runs
+    cleanup_stale
 
     check_lock
 
