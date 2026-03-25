@@ -1,6 +1,6 @@
 # Shut Up And Rip Movies 🎬
 
-![Version](https://img.shields.io/badge/version-1.4--beta-blue)
+![Version](https://img.shields.io/badge/version-1.6--beta-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Automatic DVD/Blu-ray ripping and transcoding — because ARM made my head hurt.**
@@ -367,6 +367,20 @@ Hard-won knowledge from real-world testing:
 ---
 
 ## Changelog
+
+### v1.6-beta
+- Added rescue mode prompt — on startup a 10 second prompt asks if you want the ddrescue recovery pipeline (press 'r'). Times out and defaults to normal MakeMKV mode automatically. Only shown in interactive terminal sessions, skipped when running headless via udev
+- Rescue mode preserves temp files on failure for manual recovery; normal mode now cleans up temp files on failure as well as success
+- Added startup cleanup of leftover temp files from previous failed/interrupted runs
+- Added `RESCUE_PROMPT_TIMEOUT` config option (default 10s, set to 0 to disable prompt)
+- Added `⚠️ FILL THIS IN` warnings on `OMDB_API_KEY` and `NTFY_TOPIC` config lines
+- Added scratch drive controller note to `TEMP_DIR` config comment
+- ddrescue pipeline now clearly labelled as rescue mode only in comments and log output
+
+### v1.5-beta
+- Internal drive now routes through MakeMKV instead of ddrescue — ddrescue produced corrupt ISOs when scratch drive is on a separate ASMedia SATA controller causing controller crosstalk during simultaneous read/write. MakeMKV works correctly on the internal drive with the 2016 HL-DT-ST replacement drive
+- ddrescue pipeline (rip_ddrescue, rip_dvdbackup_direct) remains intact in the script and can be re-enabled manually for damaged disc recovery if needed
+- Falls back to ddrescue if MakeMKV is not found on internal drive path
 
 ### v1.4-beta
 - Fixed silent failure when `systemd-inhibit` is installed but broken (e.g. after a Nobara update) — script now tests `systemd-inhibit` before using it and falls through to normal execution if broken rather than silently exiting
