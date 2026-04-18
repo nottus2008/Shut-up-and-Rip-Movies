@@ -80,21 +80,49 @@ def start():
         _job["lines"]  = []
 
         def _runner():
+            # HandBrake uses \r to overwrite progress in place.
+            # Read char-by-char so we catch both \n and \r as line endings.
+            PROGRESS_RE = re.compile(
+                r'Encoding:.*?(\d+\.\d+)\s*%'
+                r'(?:.*?(\d+\.\d+)\s*fps)?'
+                r'(?:.*?ETA\s*(\S+))?'
+            )
             try:
                 proc = subprocess.Popen(
                     ["bash", SCRIPT_PATH, "--no-inhibit"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,   # prevent script from seeing a terminal
                     text=True,
                     env=env,
-                    bufsize=1,
+                    bufsize=0,
                 )
                 _job["proc"] = proc
 
-                for raw_line in proc.stdout:
-                    line = _strip_ansi(raw_line.rstrip())
-                    _job["lines"].append(line)
-                    _broadcast(job_id, line)
+                buf = []
+                while True:
+                    ch = proc.stdout.read(1)
+                    if not ch:
+                        break
+                    if ch in ('\n', '\r'):
+                        raw = ''.join(buf).strip()
+                        buf = []
+                        if not raw:
+                            continue
+                        line = _strip_ansi(raw)
+
+                        # Check for HandBrake progress line
+                        m = PROGRESS_RE.search(line)
+                        if m:
+                            pct = m.group(1) or '0'
+                            fps = m.group(2) or '—'
+                            eta = m.group(3) or '—'
+                            _broadcast(job_id, f"__PROGRESS__:{pct}:{fps}:{eta}")
+                        else:
+                            _job["lines"].append(line)
+                            _broadcast(job_id, line)
+                    else:
+                        buf.append(ch)
 
                 proc.wait()
                 final_status = "done" if proc.returncode == 0 else "error"

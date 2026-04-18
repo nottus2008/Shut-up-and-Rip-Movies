@@ -42,7 +42,7 @@ NTFY_SERVER="ntfy.sh"                   # ntfy server
 RESCUE_PROMPT_TIMEOUT=20                # Seconds to wait for startup prompt
 # =============================================================================
 
-VERSION="1.9.5-beta"
+VERSION="1.9.4-beta"
 
 # Colors
 RED='\033[0;31m'
@@ -68,9 +68,19 @@ LOCK_FILE="/tmp/suarip.lock"
 MAKEMKV_CMD=()
 
 # =============================================================================
+# WEB UI OVERRIDES - ripgui.py sets these env vars instead of stdin prompts
+# Must come AFTER State init above so they aren't reset
+# =============================================================================
+[ "${SUARIP_TYPE:-}"    = "tv" ]  && IS_TV_SERIES=true
+[ -n "${SUARIP_SERIES:-}" ]       && SERIES_NAME="$SUARIP_SERIES"
+[ -n "${SUARIP_SEASON:-}" ]       && SEASON_NUM=$(printf "%02d" "${SUARIP_SEASON#0}")
+[ -n "${SUARIP_EP_START:-}" ]     && EPISODE_START="$SUARIP_EP_START"
+[ -n "${SUARIP_RESCUE:-}" ]       && RESCUE_MODE=true
+[ -n "${SUARIP_DRIVE:-}" ]        && INTERNAL_DRIVE="$SUARIP_DRIVE"
+
+# =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
-from flask import Flask, request, Response
 log() { echo -e "$1" | tee -a "$LOG_FILE"; }
 
 notify() {
@@ -308,15 +318,21 @@ transcode() {
             log "${YELLOW}[INFO]${NC} Software encode | RF: $RF_QUALITY"
         fi
 
-        if "${hb_cmd[@]}" >> "$LOG_FILE" 2>&1; then
+        # Tee HandBrake output to both the log file and stdout so ripgui.py
+        # can parse live progress lines while the log file is also preserved.
+        "${hb_cmd[@]}" 2>&1 | tee -a "$LOG_FILE"
+        HB_EXIT=${PIPESTATUS[0]}
+
+        if [ "$HB_EXIT" -eq 0 ]; then
             log "${GREEN}[INFO]${NC} Encode complete: $final_name ($(du -sh "$local_out" | cut -f1))"
         else
             log "${RED}[ERROR]${NC} HandBrake failed on $(basename "$f") - check $LOG_FILE"
             if [ "$USE_HW" = true ]; then
                 log "${YELLOW}[WARN]${NC} Retrying with software encoding..."
-                if HandBrakeCLI -i "$f" -o "$local_out" --preset "$PRESET" \
+                HandBrakeCLI -i "$f" -o "$local_out" --preset "$PRESET" \
                     -a "1,2,3" --aencoder "copy" --audio-fallback "av_aac" \
-                    --subtitle scan -F -q "$RF_QUALITY" >> "$LOG_FILE" 2>&1; then
+                    --subtitle scan -F -q "$RF_QUALITY" 2>&1 | tee -a "$LOG_FILE"
+                if [ "${PIPESTATUS[0]}" -eq 0 ]; then
                     log "${GREEN}[INFO]${NC} Software fallback succeeded: $final_name"
                 else
                     log "${RED}[ERROR]${NC} Software fallback also failed - skipping"
