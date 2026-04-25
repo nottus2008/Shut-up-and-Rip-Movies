@@ -339,7 +339,7 @@ The script tries up to 5 progressively simpler OMDB searches before giving up:
 On failure with `CONFIRM_METADATA=false` it uses the cleaned disc label title-cased. All attempted searches are logged for debugging.
 
 ### VAAPI hardware encoding
-When `USE_VAAPI=true` the script checks whether VAAPI is available before each transcode. If available it uses GPU hardware encoding (300-400+ fps on supported hardware). If VAAPI fails mid-encode it automatically retries in software. Software encoding remains the fallback on systems without GPU support.
+When `USE_VAAPI=true` the script checks whether VAAPI is available before each transcode. If available it uses GPU hardware encoding (100-200+ fps on supported hardware). If VAAPI fails mid-encode it automatically retries in software. Software encoding remains the fallback on systems without GPU support.
 
 ### Push notifications (ntfy.sh)
 When `NTFY_TOPIC` is set, the script sends push notifications at every major stage: ripping started, transcoding started, copying to NAS, done, and on any error. Works with the free ntfy.sh service or a self-hosted ntfy instance.
@@ -444,7 +444,7 @@ echo "sg" | sudo tee /etc/modules-load.d/sg.conf
 
 ## Roadmap
 
-- [x] Hardware encoding support (VAAPI) — 300-400+ fps on supported GPUs *(v1.2-beta)*
+- [x] Hardware encoding support (VAAPI) — 100-200+ fps on supported GPUs *(v1.2-beta)*
 - [x] Push notifications (ntfy.sh) — phone alerts at every pipeline stage *(v1.1-beta)*
 - [x] TV show / multi-episode disc support *(v1.7-beta)*
 - [x] Web UI — browser interface with real-time log streaming *(v1.8-beta)*
