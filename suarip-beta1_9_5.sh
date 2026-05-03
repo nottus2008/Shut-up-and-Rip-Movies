@@ -3,7 +3,7 @@
 # suarip.sh - Shut Up And Rip
 # Automatic DVD/Blu-ray Ripping and Transcoding Script
 # =============================================================================
-# Version: 1.9.4-beta
+# Version: 1.9.5-beta
 # Dependencies: makemkvcon, HandBrakeCLI, curl, python3, ddrescue, dvdbackup
 # =============================================================================
 
@@ -16,7 +16,7 @@ TEMP_DIR="/mnt/scratch/suarip_temp"     # Scratch space for temp rip files
 OUTPUT_DIR="$HOME/Videos/Suarip_Local"  # Local staging
 NAS_DIR="/mnt/nas/Media/Movies"         # NAS Movie Library
 NAS_TV_DIR="/mnt/nas/Media/TV Shows"    # NAS TV Library (Jellyfin/Plex)
-OMDB_API_KEY="8f823ae7"                         # ⚠️ FILL THIS IN
+OMDB_API_KEY=""                         # ⚠️ FILL THIS IN
 
 DVD_PRESET="HQ 720p30 Surround"         # HandBrake preset for DVD
 BLURAY_PRESET="HQ 1080p30 Surround"     # HandBrake preset for Blu-ray
@@ -37,12 +37,12 @@ VAAPI_DETECT="h264_vaapi"               # ffmpeg codec name
 VAAPI_QUALITY="22"                      # VAAPI quality
 
 # Remote Notifications
-NTFY_TOPIC="suarip-vegatron5"                           # ⚠️ FILL THIS IN for push notifications
+NTFY_TOPIC=""                           # ⚠️ FILL THIS IN for push notifications
 NTFY_SERVER="ntfy.sh"                   # ntfy server
 RESCUE_PROMPT_TIMEOUT=20                # Seconds to wait for startup prompt
 # =============================================================================
 
-VERSION="1.9.4-beta"
+VERSION="1.9.5-beta"
 
 # Colors
 RED='\033[0;31m'
